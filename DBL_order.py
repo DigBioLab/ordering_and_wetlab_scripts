@@ -22,14 +22,13 @@ also tells you
 '''
 import sys
 import glob
-import os
+import getpass
 import re
 import argparse
-import datetime; date = datetime.datetime.now().strftime('%Y_%m_%d')
+import datetime; date = datetime.datetime.now().strftime('%Y%m%d')
 import numpy as np
 import pandas as pd
 from Bio import SeqIO, PDB, SeqUtils, Seq, SeqFeature
-import json
 
 #!/software/containers/john_bercow.sif
 
@@ -59,24 +58,23 @@ def reverse_complement(seq):
 def get_arguments(argv=None):
     parser = argparse.ArgumentParser(
             formatter_class=argparse.RawTextHelpFormatter,
-            description=" * Generates an IDT-ready .xlsx file for ordering eBlocks from a folder of PDBs and/or a concatenated FASTA file.\n"
+            description=" * Generates an twist-ready fasta file for ordering individual constructs from a folder of PDBs and/or a concatenated FASTA file.\n"
                         " * Appropriate overhangs for Golden Gate cloning into entry vector(s) of interest are added automatically.\n"
-                        " * Reverse translation is performed with Ryan's Domesticator.\n"
+                        " * Reverse translation is performed with dnachisel with constraints inherited from Ryan Kibler.\n"
                         " * RECOMMENDED: check your GG assemblies at https://goldengate.neb.com/#!/\n"
                         " * Wondering why the script is called John Bercow? https://www.youtube.com/watch?v=VYycQTm2HrM&ab_channel=TheSun\n"
                         "\n"
                         " * AVAILABLE ENTRY VECTORS:\n"
-                        " *** see /net/software/lab/johnbercow/entry_vectors/ for the FULL list ***\n"
-                    f"{vec_str}\n"
+                        " *** see Benchling>DBL Database>Clining plasmids ***\n"
             )
     # REQUIRED
     parser.add_argument("input", help='file containing name and amino acid sequence can be multiple file types:\n'
                             'fasta - Fasta format and filename must end in .fa or .fasta\n'
                             'seq   - sequences in format $Sequence $Name. Filename must end is .txt, .seq, or .tab\n'
                             'pdb   - path to a folder of pdbs. Will pull all pdbs from that folder\n'
-                            '* NOTE: SCRIPT TREATS ALL SEQUENCES IN ONE FILE AS A SINGLE LIBRARY, IF YOU HAVE MULTIPLE TARGETS/LIBRARIES RUN THEM AS SEPARATE FILES',type=str)
+                           ,type=str)
     parser.add_argument(
-            '-g,--gg_vector',
+            '-g','--gg_vector',
             help='Fasta file of plasmid for Golden Gate cloning (determines the DNA adapters). Also determines the AA tags appended to the design in the FASTA output.',
             action='store',
             required=True,
@@ -123,19 +121,13 @@ def get_arguments(argv=None):
             '--design_prefix',
             help='designs get IDs with this prefix (e.g. LM0001, LM0002, etc...)',
             action='store',
-            type=str,
+            type=str
             )
     parser.add_argument(
             '--design_id',
             help='increment design indices from this number.',
             action='store',
-            type=int,
-            )
-    parser.add_argument(
-            '--design_prefix',
-            help='designs get IDs with this prefix (e.g. LM0001, LM0002, etc...)',
-            action='store',
-            type=str,
+            type=int
             )
     parser.add_argument(
             '--starting_kmers_weight',
@@ -169,22 +161,22 @@ def get_arguments(argv=None):
             '--no_layout',
             default=True,
             help="do not apply automated layout formatting.",
-            action='store_true',
+            action='store_true'
             )
     parser.add_argument(
             '--no_plasmids',
             help="do not generate the cloned plasmid maps.",
-            action='store_true',
+            action='store_true'
             )
     parser.add_argument(
             '--verbose',
             help="increase the verbosity of th e output (recommended).",
-            action='store_true',
+            action='store_true'
             )
     parser.add_argument(
             '--no_adapters',
             help="adds cut site and sticky ends, but no additional adaptor sequence",
-            action='store_true',
+            action='store_true'
             )
 
     args = parser.parse_args(argv)
@@ -194,6 +186,7 @@ def read_input_sequences(args):
     seq_dict = {
     'design_name':[],
     'aa_sequence':[],
+    'well_position':[],
     'readin_order':[],
     }
     filename = args.input.split('/')[-1]
@@ -210,16 +203,18 @@ def read_input_sequences(args):
     if filetype == 'fasta':
         fasta_sequences = list(SeqIO.parse(args.input, 'fasta'))
         for i, fasta in enumerate(fasta_sequences):
-            seq_dict['design_name'] = str(fasta.id)
-            seq_dict['aa_sequence'] = str(fasta.seq)
-            seq_dict['readin_order'] = i
+            seq_dict['design_name'].append(str(fasta.id))
+            seq_dict['aa_sequence'].append(str(fasta.seq))
+            seq_dict['readin_order'].append(i)
+            seq_dict['well_position'].append(w96[i])
     elif filetype == 'seq':
         with open(args.input, 'r') as seqfile:
             for i, line in enumerate(seqfile):
                 seq, name = line.split()
-                seq_dict['design_name'] = str(name)
-                seq_dict['aa_sequence'] = str(seq)
-                seq_dict['readin_order'] = i
+                seq_dict['design_name'].append(str(name))
+                seq_dict['aa_sequence'].append(str(seq))
+                seq_dict['readin_order'].append(i)
+                seq_dict['well_position'].append(w96[i])
     elif filetype == 'pdb':
         pdbs = sorted(glob.glob(f'{args.input}/*.pdb'))
         print(f'Extracting sequences from {len(pdbs)} PDBs...')
@@ -238,13 +233,14 @@ def read_input_sequences(args):
 
             for j, seq in enumerate(sequences):
                 if len(sequences) > 1:
-                    seq_dict['design_name'] = str(f'{pdb_name}_{i+1}')
-                    seq_dict['aa_sequence'] = str(seq)
-                    seq_dict['readin_order'] = f"{i}_{j}"
+                    seq_dict['design_name'].append(str(f'{pdb_name}_{i+1}'))
+                    seq_dict['aa_sequence'].append(str(seq))
+                    seq_dict['readin_order'].append(f"{i}_{j}")
                 else:
-                    seq_dict['design_name'] = str(f'{pdb_name}')
-                    seq_dict['aa_sequence'] = str(seq)
-                    seq_dict['readin_order'] = i
+                    seq_dict['design_name'].append(str(f'{pdb_name}'))
+                    seq_dict['aa_sequence'].append(str(seq))
+                    seq_dict['readin_order'].append(i)
+                    seq_dict['well_position'].append(w96[i])
     df = pd.DataFrame(seq_dict)
     return df, filename
 
@@ -252,7 +248,7 @@ def get_binding_adapters(args, cuts):
     hard_coded_binding_adapters = ['GTTTAAAGGTCTCGGCCGT','GGAGGTGAGACCAAAGGA']# includes cut site spacers and sticky ends for bsaI. this is the normal addition for DBE
     outside_flank = ['GTTTAAA','AAAGGA']
     fw_cut, rv_cut, spacer_len, _ = cuts[args.enzyme]
-    spacer = 'gtactacgtaatgt'
+    spacer = 'GTACTACGTAATGT'
     binding_adapters = [fw_cut + spacer[:spacer_len] + args.n_overhang + "T", "G" + args.c_overhang + spacer[-1*spacer_len:] + rv_cut]
     if args.no_adapters == False:
         binding_adapters = [outside_flank[0] + binding_adapters[0],binding_adapters[1] +  outside_flank[1]]
@@ -260,7 +256,8 @@ def get_binding_adapters(args, cuts):
         assert binding_adapters == hard_coded_binding_adapters, f'Binding adapters are not correct for {args.enzyme}. Please check the hard-coded binding adapters in the script.'
     return binding_adapters
 
-def check_max_len(df, args, binding_adapters):
+def check_max_len(df, args, cuts):
+    binding_adapters = get_binding_adapters(args, cuts)
     max_len_dna = args.max_length - len(binding_adapters[0]) - len(binding_adapters[1])
     max_length_aa = int(np.floor(max_len_dna/3)) # max len minus adapters, divided by 3 for aa
     for seq in list(df['aa_sequence']):
@@ -335,7 +332,8 @@ def reverse_translate(
         hairpins_weight=1.0,
         max_tries=10,
         species='e_coli',
-        avoid=['GGTCTC', 'GAGACC']
+        avoid=['GGTCTC', 'GAGACC'],
+        count=None
     ):
     '''
     Ryan's domesticator.
@@ -405,7 +403,10 @@ def reverse_translate(
 
         try:
             if species == 'e_coli' and i >= max_tries/2:
-                print('  [!] Preventing alternative start sites removed from the list of optimisation constraints.')
+                if count == None:
+                    print('  [!] Preventing alternative start sites removed from the list of optimisation constraints.')
+                else:
+                    print(f'  [!] Preventing alternative start sites removed from the list of optimisation constraints for {count}th sequence.')
                 initial_problem = DnaOptimizationProblem(naive_dna_sequence, constraints=constraints_easier, objectives=objectives, logger=None)
 
             else:
@@ -435,89 +436,6 @@ def reverse_translate(
 
     return best_solution.sequence
 
-def find_repeats(
-        sequence,
-        exact_repeat_min_len=20,      # Twist hard rule
-        tm_repeat_min_len=11,         # shortest repeat we bother Tm-checking
-        tm_threshold=60.0,            # Twist hard rule
-        near_repeat_min_len=20,
-        max_mismatches=2,
-    ):
-    """
-    repeat finder created by claude, not tested yet
-
-    Scan `sequence` (already-optimized DNA, e.g. reverse_translate() output)
-    for same-strand repeats and near-repeats that could cause synthesis or
-    PCR-based assembly problems.
- 
-    Returns a list of hit dicts sorted worst-first (exact_repeat > high_tm_repeat
-    > near_repeat, longest first within each), each with:
-        start1, start2 : 0-based positions of the two copies
-        length          : length of the matched region (bp)
-        mismatches      : 0 for exact/Tm hits, >0 for near-repeats
-        tm              : predicted duplex Tm of the matched region (None if
-                           not computed, e.g. for near-repeats)
-        reason          : 'exact_repeat' | 'high_tm_repeat' | 'near_repeat'
-        sequence        : the matched region itself (from copy 1)
-    """
-    sequence = sequence.upper()
-    n = len(sequence)
-    hits = []
- 
-    # --- exact repeats (>= exact_repeat_min_len) and short high-Tm repeats ---
-    seed_len = min(exact_repeat_min_len, tm_repeat_min_len)
-    seed_positions = _kmer_positions(sequence, seed_len)
- 
-    for positions in seed_positions.values():
-        if len(positions) < 2:
-            continue
-        for i, j in combinations(positions, 2):
-            if not _is_left_maximal(sequence, i, j):
-                continue  # this pair is a sub-match of an earlier, longer seed
-            length = _extend_exact(sequence, i, j)
-            if length < seed_len:
-                continue
-            a, b = min(i, j), max(i, j)
-            if length >= exact_repeat_min_len:
-                hits.append({
-                    'start1': a, 'start2': b, 'length': length, 'mismatches': 0,
-                    'tm': None, 'reason': 'exact_repeat',
-                    'sequence': sequence[a:a + length],
-                })
-            elif length >= tm_repeat_min_len:
-                segment = sequence[a:a + length]
-                tm = mt.Tm_NN(segment)
-                if tm >= tm_threshold:
-                    hits.append({
-                        'start1': a, 'start2': b, 'length': length, 'mismatches': 0,
-                        'tm': tm, 'reason': 'high_tm_repeat', 'sequence': segment,
-                    })
- 
-    exact_hits = [h for h in hits if h['reason'] in ('exact_repeat', 'high_tm_repeat')]
- 
-    # --- near-repeats (mismatches tolerated) ---
-    near_hits = []
-    for i, j in _near_repeat_anchors(sequence, near_repeat_min_len, max_mismatches):
-        a, b = min(i, j), max(i, j)
-        length, mismatches = _extend_with_mismatches(
-            sequence, a, b, max_mismatches
-        )
-        if length < near_repeat_min_len or mismatches == 0:
-            continue
-        if _contained_in_any(exact_hits + near_hits, a, b, length):
-            continue
-        near_hits.append({
-            'start1': a, 'start2': b, 'length': length, 'mismatches': mismatches,
-            'tm': None, 'reason': 'near_repeat', 'sequence': sequence[a:a + length],
-        })
- 
-    hits.extend(near_hits)
- 
-    reason_rank = {'exact_repeat': 0, 'high_tm_repeat': 1, 'near_repeat': 2}
-    hits.sort(key=lambda h: (reason_rank[h['reason']], -h['length']))
-    return hits
-
-
 # ============================================
 # FUNCTIONS
 # ============================================
@@ -542,46 +460,39 @@ def check_for_duplicates(aa_sequences):
         print('ERROR: Duplicates. Verify your sequences and retry. System exiting...')
         sys.exit()
 
-def adjust_for_fragments(df, max_length, gg_int_adapters, avoid_seqs):
+def adjust_for_fragments(dna_sequence, max_length, gg_int_adapters, avoid_seqs):
     '''
     Check size of DNA sequences pad if necessary to meet minimum length requirements for ordering gene fragments from Twist Bioscience.
     '''
-    dna_fragments = []
-    for _, r in df.iterrows():
-        dna_seq = gg_int_adapters[0] + r['dna_sequence'] + gg_int_adapters[1]
-        # Check if the sequence fits the the size limits
-        if len(dna_seq) < 300:
-            pad_length = ((300 - (len(dna_seq))) // 2 )
-            extra = 300 - len(dna_seq) - (2 * pad_length)
-            if extra < 0 :
-                extra = 0
-            # Pad sequence
-            pad_nocut = False
-            while pad_nocut == False:
+    dna_seq = gg_int_adapters[0] + dna_sequence + gg_int_adapters[1]
+    # Check if the sequence fits the the size limits
+    if len(dna_seq) < 300:
+        pad_length = ((300 - (len(dna_seq))) // 2 )
+        extra = 300 - len(dna_seq) - (2 * pad_length)
+        if extra < 0 :
+            extra = 0
+        # Pad sequence
+        pad_nocut = False
+        while pad_nocut == False:
+            pad5prime = ''.join(np.random.choice(['A','T','C','G'], size=pad_length + extra))
+            pad3prime = ''.join(np.random.choice(['A','T','C','G'], size=pad_length))
+            dna_fragment =  pad5prime + dna_seq + pad3prime
+            pad_nocut = True
 
-                pad5prime = ''.join(np.random.choice(['A','T','C','G'], size=pad_length + extra))
-                pad3prime = ''.join(np.random.choice(['A','T','C','G'], size=pad_length))
-
-                pad_nocut = True
-                for a_seq in avoid_seqs:
-                    # if any cut sequence is found in the padding, try again
-                    if (a_seq in pad5prime) or (a_seq in pad3prime):
-                        pad_nocut = False
-                    elif a_seq in pad5prime + pad3prime:
-                        pad_nocut = False
-                        
-
-            dna_seq =  pad5prime + dna_seq + pad3prime
-        if len(dna_seq) > max_length:
-            sys.exit(f"Internal error: DNA sequence is too long to be ordered as a gene fragment ({len(dna_seq)} vs. {max_length} bp).\n"\
-                     "This should have been caught earlier in the script. Contact @sruge that you are seeing this error")
-        for avoid in avoid_seqs:
-            if dna_seq.count(avoid) > 1:        
-                sys.exit(f"Internal error: {avoid} shows up in DNA sequence more than once.\n"\
-                        "This should not be able to occur. Contact @sruge that you are seeing this error, and tell them that their internal logic is wrong")
-        dna_fragments.append(dna_seq)
-
-    return dna_fragments
+            for a_seq in avoid_seqs:
+                # if any cut sequence is found in the padding, try again
+                if (a_seq in pad5prime) or (a_seq in pad3prime):
+                    pad_nocut = False
+                elif a_seq in pad5prime + pad3prime:
+                    pad_nocut = False
+                elif dna_fragment.count(a_seq) > 1:
+                    pad_nocut = False
+    else:
+        dna_fragment = dna_seq
+    if len(dna_fragment) > max_length:
+        sys.exit(f"Internal error: DNA sequence is too long to be ordered as a gene fragment ({len(dna_seq)} vs. {max_length} bp).\n"\
+                    "This should have been caught earlier in the script. Contact @sruge that you are seeing this error")
+    return dna_fragment
 
 def rev_translate_and_make_fragments(df, args, cuts):
         '''
@@ -594,7 +505,8 @@ def rev_translate_and_make_fragments(df, args, cuts):
         dna_frag_len = []
         gg_adapters = get_binding_adapters(args, cuts)
         avoid_seqs = [cuts[args.enzyme][0], cuts[args.enzyme][1]] + args.avoid
-        for _, r in df.iterrows():
+        print("Starting reverse translation and fragment generation...")
+        for i, r in df.iterrows():
             amino_acid_sequence = r['aa_sequence']
             dna_sequence = reverse_translate(
                 amino_acid_sequence,
@@ -603,16 +515,112 @@ def rev_translate_and_make_fragments(df, args, cuts):
                 hairpins_weight=1.0,
                 max_tries=10,
                 species=args.species,
-                avoid=avoid_seqs
+                avoid=avoid_seqs,
+                count=i
                 )
             dna_sequences.append(dna_sequence)
             dna_fragment = adjust_for_fragments(dna_sequence, args.max_length, gg_adapters, avoid_seqs)
             dna_fragments.append(dna_fragment)
-            dna_frag_len = len(dna_fragment)
+            dna_frag_len.append(len(dna_fragment))
         df['dna_sequence'] = dna_sequences
         df['dna_fragments'] = dna_fragments
         df['length_fragments'] = dna_frag_len
         return df
+
+def golden_gate_assembly(df, args, cuts):
+    '''
+    Perform Golden Gate assembly of the plasmid and insert sequences.
+    Check for mismatched overhangs, out of frame issues, and extra cut sites.
+    Output the full cloned assembly, DNA ORF, and AA ORF.
+    '''
+    # Enzyme-specific cut characteristics.
+    fw, rv, n_spacer, n_sticky = cuts[args.enzyme]
+    vector_fasta = SeqIO.read(args.gg_vector, 'fasta')
+    entry_vector= str(vector_fasta.seq).lower()
+    df['plasmid'] = vector_fasta.id
+
+    # GG cloning.
+    vector_5prime = entry_vector.find(fw.lower()) + len(fw) + n_spacer
+    vector_3prime = entry_vector.find(rv.lower()) - n_spacer
+    
+    gg_dict = {'well_position':[], 'ORF':[], 'exp_aa_seq':[], 'cloned_plasmid_seq':[]}
+    for _, r in df.iterrows():
+        aa_seq = r['aa_sequence']
+        insert = r['dna_fragments'].upper()
+
+        # Find eBlock section with cut sites facing in the correct directions.
+        # This should not have cut sites in the padding regions, (Necessary for cases where cut sites are accidentlly also present in the padding regions.)
+        fw_locations = np.array([x.span()[0] for x in re.finditer(fw.upper(), insert.upper())])
+        rv_locations = np.array([x.span()[0] for x in re.finditer(rv.upper(), insert.upper())])
+
+        fw_idx = []
+        rv_idx = []
+        delta_bp = []
+        for i, f_loc in enumerate(fw_locations):
+            for j, rv_loc in enumerate(rv_locations):
+                delta_bp.append(rv_loc - f_loc)
+                fw_idx.append(i)
+                rv_idx.append(j)
+
+        delta_bp = np.array(delta_bp)
+
+        correct_idx = np.argwhere(delta_bp==delta_bp[delta_bp>=3*len(aa_seq)].min())[0][0]
+
+        insert_5prime = fw_locations[fw_idx[correct_idx]] \
+                        + len(fw) \
+                        + n_spacer \
+                        + n_sticky
+
+        insert_3prime = rv_locations[rv_idx[correct_idx]] \
+                        - n_spacer \
+                        - n_sticky
+
+        assembled_plasmid = entry_vector[:vector_3prime] \
+                                + insert[insert_5prime:insert_3prime] \
+                                + entry_vector[vector_5prime:]
+        gg_dict['cloned_plasmid_seq'].append(assembled_plasmid.lower())
+        gg_dict['well_position'].append(r['well_position'])
+
+        # Identify the ORF that contains the insert.
+        # Search for the shortest START-STOP span that contains the insert sequence.
+        plasmid_seq = assembled_plasmid.lower()
+        starts = np.array([s.start() for s in re.finditer('atg', plasmid_seq)])
+        ends = np.array(sorted([e.end() for e in re.finditer('tag', plasmid_seq)] 
+                                + [e.end() for e in re.finditer('taa', plasmid_seq)] 
+                                + [e.end() for e in re.finditer('tga', plasmid_seq)]))
+        current_stop = 0
+        ORF = None
+        circular = False
+        for s in starts:
+            inframe_stops = ends[np.logical_and(ends>s, (ends-s)%3==0)]
+            if len(inframe_stops) == 0:
+                #if no in-frame stops are found, check if the insert is at the end of the plasmid and if there is an in-frame stop before the start codon
+                #still need to check that this math is correct
+                start = len(plasmid_seq) - s 
+                inframe_stops = ends[np.logical_and(ends<s, (ends+start)%3==0)]
+                circular = True
+            if len(inframe_stops) > 0:
+                current_stop = inframe_stops[0]
+                if circular == True:
+                    coding_seq = plasmid_seq[s:] + plasmid_seq[:current_stop]
+                else:
+                    coding_seq = plasmid_seq[s:current_stop]
+                circular = False
+                if insert[insert_5prime:insert_3prime].lower() in coding_seq:
+                    ORF = coding_seq
+                    exp_product = str(Seq.Seq(ORF).translate())
+                elif ORF == None and coding_seq in insert[insert_5prime:insert_3prime].lower():
+                    ORF = coding_seq
+                    exp_product = str(Seq.Seq(ORF).translate())
+        if ORF == None:
+            print("ERROR: CANNOT FIND OPEN READING FRAME WHEN TRYING GOLDEN GATE ASSEMBLY")
+            print("No open reading frame found, do the cutsites for the vector map (fasta file) and the overhangs listed in the vector map match?")
+            sys.exit(1)
+        gg_dict['ORF'].append(ORF)
+        gg_dict['exp_aa_seq'].append(exp_product)
+    gg_df = pd.DataFrame(gg_dict)
+    merged_df = pd.merge(df, gg_df, on='well_position')
+    return merged_df
 
 def output(df, filename):
     '''
@@ -661,198 +669,15 @@ for p in range(1, 10):
 # Main
 #=====================
 if __name__ == '__main__':
-    user=os.getlogin()
+    user=getpass.getuser()
     args = get_arguments()
-   
     # read in sequences
     input_df, filename = read_input_sequences(args)
-    filename = f'{date}_{user}_{filename}_{args.species}_{enzyme}'
+    filename = f'{date}_{user}_{filename}_{args.species}_{args.enzyme}'
     #check maximum length of sequences
-    check_max_len(input_df, args, binding_adapters)
+    check_max_len(input_df, args, cuts)
     check_for_a280_and_coomassie(input_df)
     # Reverse translate sequences and add adapters
     rev_translated_df = rev_translate_and_make_fragments(input_df, args, cuts)
-
-def golden_gate_assembly(rev_translated_df, args, cuts):
-    '''
-    Perform Golden Gate assembly of the plasmid and insert sequences.
-    Check for mismatched overhangs, out of frame issues, and extra cut sites.
-    Output the full cloned assembly, DNA ORF, and AA ORF.
-    '''
-    # Enzyme-specific cut characteristics.
-    fw, rv, n_spacer, n_sticky = cuts[args.enzyme]
-    vector_fastas = SeqIO.read(args.gg_vector, 'fasta')
-    if len(vector_fastas) > 1:
-        print(f'Warning: {args.gg_vector} contains multiple sequences. Taking first one, but this may not be the desired sequence.')
-        vector_fastas = vector_fastas[0]
-    entry_vector= vector_fastas.seq.lower()
-    vector_name = vector_fastas.id
-    # GG cloning.
-    vector_5prime = entry_vector.find(fw) + len(fw) + n_spacer
-    vector_3prime = entry_vector.find(rv) - n_spacer
-
-    for _, r in rev_translated_df.iterrows():
-        gg_v = args.gg_vector.split('/')[-1].split('.')[0]
-        aa_seq = r['aa_sequence']
-        insert = r['dna_fragments'].lower()
-
-        # Find eBlock section with cut sites facing in the correct directions.
-        # This should not have cut sites in the padding regions, (Necessary for cases where cut sites are accidentlly also present in the padding regions.)
-        fw_locations = np.array([x.span()[0] for x in re.finditer(fw, insert)])
-        rv_locations = np.array([x.span()[0] for x in re.finditer(rv, insert)])
-
-        fw_idx = []
-        rv_idx = []
-        delta_bp = []
-        for i, f in enumerate(fw_locations):
-            for j, r in enumerate(rv_locations):
-                delta_bp.append(r - f)
-                fw_idx.append(i)
-                rv_idx.append(j)
-
-        delta_bp = np.array(delta_bp)
-        correct_idx = np.argwhere(delta_bp==delta_bp[delta_bp>=3*len(aa_seq)].min())[0][0]
-
-        insert_5prime = fw_locations[fw_idx[correct_idx]] \
-                        + len(fw) \
-                        + n_spacer \
-                        + n_sticky
-
-        insert_3prime = rv_locations[rv_idx[correct_idx]] \
-                        - n_spacer \
-                        - n_sticky
-
-        assembled_plasmid = entry_vector[:vector_3prime] \
-                                + insert[insert_5prime:insert_3prime] \
-                                + entry_vector[vector_5prime:]
-        
-        eblocks[f'{gg_v}_cloned_plasmid_seq'].append(assembled_plasmid.lower())
-        
-        
-        # Identify the ORF that contains the insert.
-        # Search for the shortest START-STOP span that contains the insert sequence.
-        plasmid_seq = assembled_plasmid.lower()
-        starts = np.array([s.start() for s in re.finditer('atg', plasmid_seq)])
-        ends = np.array(sorted([e.end() for e in re.finditer('tag', plasmid_seq)] 
-                                + [e.end() for e in re.finditer('taa', plasmid_seq)] 
-                                + [e.end() for e in re.finditer('tga', plasmid_seq)]))
-        current_stop = 0
-        ORF = None
-        for s in starts:
-            inframe_stops = ends[np.logical_and(ends>s, (ends-s)%3==0)]
-            if len(inframe_stops) == 0:
-                #if no in-frame stops are found, check if the insert is at the end of the plasmid and if there is an in-frame stop before the start codon
-                #still need to check that this math is correct
-                start = len(plasmid_seq) - s 
-                inframe_stops = ends[np.logical_and(ends<s, (start+ends)%3==0)]
-            if len(inframe_stops) > 0:
-                if s > current_stop:
-                    current_stop = inframe_stops[0]
-                    coding_seq = plasmid_seq[s:current_stop]
-
-                    if insert[insert_5prime:insert_3prime] in coding_seq:
-                        ORF = coding_seq
-                        exp_product = str(Seq.Seq(ORF).translate())
-                    elif ORF == None and coding_seq in insert[insert_5prime:insert_3prime]:
-                        ORF = coding_seq
-                        exp_product = str(Seq.Seq(ORF).translate())
-        if ORF == None:
-            print("ERROR: CANNOT FIND OPEN READING FRAME WHEN TRYING GOLDEN GATE ASSEMBLY")
-            print("No open reading frame found, do the cutsites for the vector map (fasta file) and the overhangs listed in the vector map match?")
-            print("Make sure the cloning region does not continue back to the top of the file. We don't parse the files as circular maps")
-            sys.exit(1)
-
-        eblocks[f'ORF_from_{gg_v}'].append(ORF)
-        eblocks[f'exp_aa_seq_from_{gg_v}'].append(exp_product)
-
-    return
-
-
-def cut_fragment(seq, enzyme_site, overhang_length, downstream_offset):
-    """
-    Cut a DNA sequence at enzyme sites and return (left_overhang, insert, right_overhang).
-    """
-    rev_site = reverse_complement(enzyme_site)
-
-    # Left site
-    left_idx = seq.find(enzyme_site)
-    if left_idx == -1:
-        raise ValueError(f"Left enzyme site not found in sequence: {seq}")
-    left_overhang_start = left_idx + len(enzyme_site) + downstream_offset
-    left_overhang = seq[left_overhang_start:left_overhang_start + overhang_length]
-
-    # Right site (reverse complement)
-    right_idx = seq.find(rev_site)
-    if right_idx == -1:
-        raise ValueError(f"Right enzyme site not found in sequence: {seq}")
-    right_overhang_end = right_idx - downstream_offset
-    right_overhang = seq[right_overhang_end - overhang_length:right_overhang_end]
-    
-    # Internal insert (between overhangs)
-    insert_start = left_overhang_start + overhang_length
-    insert_end = right_overhang_end - overhang_length
-    insert = seq[insert_start:insert_end]
-
-    return left_overhang, insert, right_overhang
-
-def golden_gate_assemble(backbone, fragments, enzyme_site, overhang_length, downstream_offset):
-    """
-    Assemble multiple DNA fragments into a backbone using Golden Gate assembly.
-    Fragments can be in any order; they will be sorted automatically by overhangs.
-    """
-    #everything to upper case
-    backbone = backbone.upper()
-    fragments = [frag.upper() for frag in fragments]
-    enzyme_site = enzyme_site.upper()
-    
-    # Cut backbone and get its overhangs
-    bb_left_oh, _, bb_right_oh = cut_fragment(backbone, enzyme_site, overhang_length, downstream_offset)
-
-    # Cut all fragments
-    frag_parts = []
-    for i, frag in enumerate(fragments):
-        left_oh, insert, right_oh = cut_fragment(frag, enzyme_site, overhang_length, downstream_offset)
-        frag_parts.append({
-            "index": i,
-            "left_oh": left_oh,
-            "insert": insert,
-            "right_oh": right_oh
-        })
-
-    # Build lookup table for fragment left overhangs
-    left_lookup = {f["left_oh"]: f for f in frag_parts}
-
-    # Start with the fragment that matches backbone's right overhang
-    if bb_right_oh not in left_lookup:
-        raise ValueError(f"No fragment matches backbone right overhang: {bb_right_oh}")
-
-    ordered = []
-    current_oh = bb_right_oh
-    while current_oh in left_lookup:
-        frag = left_lookup.pop(current_oh)
-        ordered.append(frag)
-        current_oh = frag["right_oh"]
-
-    # Final check: last fragment right overhang must match backbone left
-    if ordered[-1]["right_oh"] != bb_left_oh:
-        raise ValueError(
-            f"Assembly overhangs do not close properly. "
-            f"Expected {bb_left_oh}, got {ordered[-1]['right_oh']}"
-        )
-
-    # Final assembly: backbone prefix + inserts + backbone suffix
-    # Prefix = sequence before left site; suffix = after right site
-    left_site_index = backbone.find(reverse_complement(enzyme_site))
-    right_site_index = backbone.find(enzyme_site)
-    offset = downstream_offset
-    left_backbone_seq = backbone[:left_site_index - offset]
-    right_backbone_seq = backbone[right_site_index + len(reverse_complement(enzyme_site)) + offset + len(bb_right_oh):]
-    
-    assembled = (
-        left_backbone_seq +
-        "".join(f["insert"] + f["right_oh"] for f in ordered) +
-        right_backbone_seq
-    )
-
-    return assembled
-
+    gg_df = golden_gate_assembly(rev_translated_df, args, cuts)
+    output(gg_df, filename)
