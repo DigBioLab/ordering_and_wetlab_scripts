@@ -29,6 +29,7 @@ import datetime; date = datetime.datetime.now().strftime('%Y%m%d')
 import numpy as np
 import pandas as pd
 from Bio import SeqIO, PDB, SeqUtils, Seq, SeqFeature
+from Bio.SeqUtils.ProtParam import ProteinAnalysis
 
 #!/software/containers/john_bercow.sif
 
@@ -66,6 +67,7 @@ def get_arguments(argv=None):
                         "\n"
                         " * AVAILABLE ENTRY VECTORS:\n"
                         " *** see Benchling>DBL Database>Clining plasmids ***\n"
+                        " *EXAMPLE COMMAND: python DBL_order.py input.fasta -g gg_vector.fasta \n"
             )
     # REQUIRED
     parser.add_argument("input", help='file containing name and amino acid sequence can be multiple file types:\n'
@@ -266,18 +268,7 @@ def check_max_len(df, args, cuts):
             sys.exit("  [!] Sequence too long for twist synthesis. System exiting...")
     return
 
-def check_for_a280_and_coomassie(df):
-    for _,r in df.iterrows():
-        seq = r['aa_sequence']
-        if 'W' not in seq and 'Y' not in seq:
-            print(f'  [!] Design {r["design_name"]} does not contain tryptophan or tyrosine.\n' \
-                ' This sequence will not be detectable by A280. Please check your input file.\n'\
-                f'{seq}')
-        if 'W' not in seq and 'Y' not in seq and 'R' not in seq and 'K' not in seq and 'H' not in seq and 'P' not in seq:
-            print(f'  [!] Design {r["design_name"]} does not contain tryptophan, tyrosine, arginine, lysine, histidine, or proline.\n'\
-                ' This sequence will not be detectable by Coomassie staining. Please check your input file.\n'\
-                f'{seq}')
-    return
+
 # ============================================
 # Domesticator
 # ============================================
@@ -622,6 +613,28 @@ def golden_gate_assembly(df, args, cuts):
     merged_df = pd.merge(df, gg_df, on='well_position')
     return merged_df
 
+def check_for_a280_and_coomassie(df):
+    ext_coefficient = []
+    mass = []
+    for _,r in df.iterrows():
+        seq = r['exp_aa_seq']
+        seq = seq.replace("*","")
+        protparam = ProteinAnalysis(seq)
+        mol_weight = protparam.molecular_weight()
+        mass.append(int(np.round(mol_weight)))
+        ext_coefficient.append(protparam.molar_extinction_coefficient()[1])
+        if 'W' not in seq and 'Y' not in seq:
+            print(f'  [!] Design {r["design_name"]} does not contain tryptophan or tyrosine.\n' \
+                ' This sequence will not be detectable by A280. Please check your input file.\n'\
+                f'{seq}')
+        if 'W' not in seq and 'Y' not in seq and 'R' not in seq and 'K' not in seq and 'H' not in seq and 'P' not in seq:
+            print(f'  [!] Design {r["design_name"]} does not contain tryptophan, tyrosine, arginine, lysine, histidine, or proline.\n'\
+                ' This sequence will not be detectable by Coomassie staining. Please check your input file.\n'\
+                f'{seq}')
+    df['MW'] = mass
+    df["ext_coefficient"] = ext_coefficient
+    return
+
 def output(df, filename):
     '''
     outputs a CSV with all information for user. columns are:
@@ -630,6 +643,9 @@ def output(df, filename):
         'plasmid','cloned_plasmid_seq',
         'ORF','exp_aa_seq', 
     '''
+    print(f'Outputting CSV and FASTA files for {len(df)} designs...')
+    print("Fasta file can be inputted into Twist for ordering gene fragments. CSV file contains all information for user.")
+    print("Keep the CSV, when Stacey makes more scripts that's generally one of the input files.")
     #output CSV with all information for user
     with open(f'{filename}.csv', 'w') as f:
         df.to_csv(f, index=False)
@@ -676,8 +692,8 @@ if __name__ == '__main__':
     filename = f'{date}_{user}_{filename}_{args.species}_{args.enzyme}'
     #check maximum length of sequences
     check_max_len(input_df, args, cuts)
-    check_for_a280_and_coomassie(input_df)
     # Reverse translate sequences and add adapters
     rev_translated_df = rev_translate_and_make_fragments(input_df, args, cuts)
     gg_df = golden_gate_assembly(rev_translated_df, args, cuts)
+    check_for_a280_and_coomassie(gg_df)
     output(gg_df, filename)
