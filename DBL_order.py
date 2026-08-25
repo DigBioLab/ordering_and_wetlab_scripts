@@ -66,8 +66,9 @@ def get_arguments(argv=None):
                         " * Wondering why the script is called John Bercow? https://www.youtube.com/watch?v=VYycQTm2HrM&ab_channel=TheSun\n"
                         "\n"
                         " * AVAILABLE ENTRY VECTORS:\n"
-                        " *** see Benchling>DBL Database>Clining plasmids ***\n"
-                        " *EXAMPLE COMMAND: python DBL_order.py input.fasta -g gg_vector.fasta \n"
+                        " *** see Benchling>DBL Database>Cloning plasmids ***\n"
+                        " * EXAMPLE COMMAND: python DBL_order.py input.fasta -g gg_vector.fasta \n"
+                        " * If you are using cell free mix make sure to add --cell_free flag!"
             )
     # REQUIRED
     parser.add_argument("input", help='file containing name and amino acid sequence can be multiple file types:\n'
@@ -119,6 +120,11 @@ def get_arguments(argv=None):
             type=str,
             default='e_coli'
             )
+    parser.add_argument(
+                '--cell_free',
+                help="adds constraints to reverse translate with codon table for tobacco as well (for ALICE cell free mix)",
+                action='store_true'
+                )
     parser.add_argument(
             '--design_prefix',
             help='designs get IDs with this prefix (e.g. LM0001, LM0002, etc...)',
@@ -315,6 +321,29 @@ class MinimizeNumKmers(Specification):
         return "MinimizeNum%dmers" % self.k
 
 DEFAULT_SPECIFICATIONS_DICT["MinimizeNumKmers"] = MinimizeNumKmers
+def get_tobacco_table():
+    codon_table = {'F': {'TTT': 0.58, 'TTC': 0.42},
+            'L': {'TTA': 0.15,'TTG': 0.24,'CTT': 0.26,'CTC': 0.13,'CTA': 0.1,'CTG': 0.11},
+            'I': {'ATT': 0.5, 'ATC': 0.25, 'ATA': 0.25},
+            'M': {'ATG': 1.0},
+            'V': {'GTT': 0.41, 'GTC': 0.17, 'GTA': 0.17, 'GTG': 0.25},
+            'S': {'TCT': 0.26,'TCC': 0.13,'TCA': 0.23,'TCG': 0.07,'AGT': 0.17,'AGC': 0.13},
+            'P': {'CCT': 0.37, 'CCC': 0.13, 'CCA': 0.4, 'CCG': 0.1},
+            'T': {'ACT': 0.39, 'ACC': 0.19, 'ACA': 0.34, 'ACG': 0.09},
+            'A': {'GCT': 0.43, 'GCC': 0.17, 'GCA': 0.32, 'GCG': 0.08},
+            'Y': {'TAT': 0.57, 'TAC': 0.43},
+            '*': {'TAA': 0.42, 'TAG': 0.19, 'TGA': 0.39},
+            'H': {'CAT': 0.61, 'CAC': 0.39},
+            'Q': {'CAA': 0.58, 'CAG': 0.42},
+            'N': {'AAT': 0.61, 'AAC': 0.39},
+            'K': {'AAA': 0.49, 'AAG': 0.51},
+            'D': {'GAT': 0.69, 'GAC': 0.31},
+            'E': {'GAA': 0.55, 'GAG': 0.45},
+            'C': {'TGT': 0.58, 'TGC': 0.42},
+            'W': {'TGG': 1.0},
+            'R': {'CGT': 0.15,'CGC': 0.08,'CGA': 0.11,'CGG': 0.08,'AGA': 0.33,'AGG': 0.25},
+            'G': {'GGT': 0.33, 'GGC': 0.17, 'GGA': 0.34, 'GGG': 0.16}}
+    return codon_table
 
 def reverse_translate(
         amino_acid_sequence,
@@ -324,7 +353,8 @@ def reverse_translate(
         max_tries=10,
         species='e_coli',
         avoid=['GGTCTC', 'GAGACC'],
-        count=None
+        count=None,
+        cell_free=False
     ):
     '''
     Ryan's domesticator.
@@ -340,7 +370,7 @@ def reverse_translate(
     objectives = []
     objectives.append(MinimizeNumKmers(k=8, boost=kmers_weight, location=location))
     objectives.append(dnachisel.builtin_specifications.AvoidHairpins(boost=hairpins_weight, location=location))
-    objectives.append(dnachisel.builtin_specifications.MaximizeCAI(species=species, boost=cai_weight, location=location))
+    
 
     # Add optimisation constraints.
     constraints = []
@@ -354,7 +384,16 @@ def reverse_translate(
     constraints.append(dnachisel.builtin_specifications.AvoidPattern("ATCTGTT", location=location)) # T7/T3 RNA polymerase pausing
     constraints.append(dnachisel.builtin_specifications.AvoidPattern("GGRGGT", location=location)) # G-quadruplex?
     constraints.append(dnachisel.builtin_specifications.UniquifyAllKmers(k=20, include_reverse_complement=True, location=location)) # ensure no 20-mers are repeated in the sequence (including reverse complement)
-
+    if cell_free:
+        cf_table = get_tobacco_table()
+        min_freq = 0.1
+        objectives.append(dnachisel.builtin_specifications.MaximizeCAI(species=species, boost=cai_weight, location=location))
+        objectives.append(dnachisel.builtin_specifications.MaximizeCAI(codon_usage_table=cf_table, boost=cai_weight, location=location))
+        constraints.append(dnachisel.builtin_specifications.AvoidRareCodons(min_frequency=min_freq,codon_usage_table=cf_table,location=location,))
+        constraints.append(dnachisel.builtin_specifications.AvoidRareCodons(min_frequency=min_freq,species=species,location=location,))
+    else:
+        objectives.append(dnachisel.builtin_specifications.MaximizeCAI(species=species, boost=cai_weight, location=location))
+        
     for seq in avoid: # GG enzyme recognition site.
         constraints.append(dnachisel.builtin_specifications.AvoidPattern(seq, location=location))
 
@@ -507,7 +546,8 @@ def rev_translate_and_make_fragments(df, args, cuts):
                 max_tries=10,
                 species=args.species,
                 avoid=avoid_seqs,
-                count=i
+                count=i,
+                cell_free=args.cell_free
                 )
             dna_sequences.append(dna_sequence)
             dna_fragment = adjust_for_fragments(dna_sequence, args.max_length, gg_adapters, avoid_seqs)
@@ -623,14 +663,25 @@ def check_for_a280_and_coomassie(df):
         mol_weight = protparam.molecular_weight()
         mass.append(int(np.round(mol_weight)))
         ext_coefficient.append(protparam.molar_extinction_coefficient()[1])
+        base_aa = r['aa_sequence']
         if 'W' not in seq and 'Y' not in seq:
-            print(f'  [!] Design {r["design_name"]} does not contain tryptophan or tyrosine.\n' \
-                ' This sequence will not be detectable by A280. Please check your input file.\n'\
-                f'{seq}')
-        if 'W' not in seq and 'Y' not in seq and 'R' not in seq and 'K' not in seq and 'H' not in seq and 'P' not in seq:
-            print(f'  [!] Design {r["design_name"]} does not contain tryptophan, tyrosine, arginine, lysine, histidine, or proline.\n'\
-                ' This sequence will not be detectable by Coomassie staining. Please check your input file.\n'\
-                f'{seq}')
+            if 'R' not in seq and 'K' not in seq and 'H' not in seq and 'P' not in seq:
+                print(f'  [!] Expressed sequence {r["design_name"]} does not contain tryptophan, tyrosine, arginine, lysine, histidine, or proline.\n'\
+                        ' This sequence will not be detectable by A280 or Coomassie staining. Be aware of this in your assays!\n'\
+                        f'{seq}')
+            else:
+                print(f'  [!] Expressed sequence {r["design_name"]} does not contain tryptophan or tyrosine.\n' \
+                        ' This sequence will not be detectable by A280. Be aware of this in your assays!\n'\
+                        f'{seq}')
+        elif 'W' not in base_aa and 'Y' not in base_aa:
+            if 'W' not in base_aa and 'Y' not in base_aa and 'R' not in base_aa and 'K' not in base_aa and 'H' not in base_aa and 'P' not in base_aa:
+                print(f'  [!] Base design {r["design_name"]} does not contain tryptophan, tyrosine, arginine, lysine, histidine, or proline.\n'\
+                    ' If you clone into a different plasmid you may not be able to see it by A280, make sure to check!.\n'\
+                    f'{base_aa}')
+            else:
+                print(f'  [!] Base design {r["design_name"]} does not contain tryptophan or tyrosine.\n' \
+                        ' If you clone into a different plasmid you may not be able to see it by A280 or Coomassie, make sure to check!.\n'\
+                        f'{base_aa}')
     df['MW'] = mass
     df["ext_coefficient"] = ext_coefficient
     return
@@ -643,9 +694,9 @@ def output(df, filename):
         'plasmid','cloned_plasmid_seq',
         'ORF','exp_aa_seq', 
     '''
-    print(f'Outputting CSV and FASTA files for {len(df)} designs...')
+    print(f'\n\nOutputting CSV and FASTA files for {len(df)} designs...')
     print("Fasta file can be inputted into Twist for ordering gene fragments. CSV file contains all information for user.")
-    print("Keep the CSV, when Stacey makes more scripts that's generally one of the input files.")
+    print("Keep the CSV, when Stacey makes more scripts that's generally one of the input files. It may also be used in the DBL database")
     #output CSV with all information for user
     mini_df = df.copy()
     mini_df = mini_df.drop(columns=['cloned_plasmid_seq'])
