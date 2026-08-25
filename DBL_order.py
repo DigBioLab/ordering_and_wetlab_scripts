@@ -647,8 +647,10 @@ def output(df, filename):
     print("Fasta file can be inputted into Twist for ordering gene fragments. CSV file contains all information for user.")
     print("Keep the CSV, when Stacey makes more scripts that's generally one of the input files.")
     #output CSV with all information for user
+    mini_df = df.copy()
+    mini_df = mini_df.drop(columns=['cloned_plasmid_seq'])
     with open(f'{filename}.csv', 'w') as f:
-        df.to_csv(f, index=False)
+        mini_df.to_csv(f, index=False)
     #output fasta with all fragments for twist
     with open(f'{filename}.fasta', 'w') as f:
         for _, r in df.iterrows():
