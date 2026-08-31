@@ -1,0 +1,17 @@
+Limitations: I think you need a linux environment for this if it is made in linux. 
+
+apptainers can be made using the following code:
+conda install apptainer <------ if you do not already have it installed
+
+build_apptainer.sh <name_of_sif> <name_of_specification_file> [env_name] [base_image]
+
+Required:
+sif - your output file and the file that you will actually use to run future code. 
+	i.e. :~$ bioenv.sif DBL_order.py protein.fa -g plasmid.fa
+spec file - This is the specification on what things you actually want to build in your container.
+	An example is made in the file 'environment.yml'
+
+optional:
+env_name - you can change the environment name, it defaults to 'env'
+base_image - you can change the base image (such as docker, miniforge, microforge, etc) 
+	defaults to condaforge/miniforge3:latest

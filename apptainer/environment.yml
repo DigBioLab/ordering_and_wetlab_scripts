@@ -1,0 +1,15 @@
+name: bioenv_sruge
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - biopython
+  - dnachisel
+  - numpy
+  - pandas
+  - scipy
+  - pip:
+    - biopython==1.88
+    - dnachisel==3.2.16
+    - python-codon-tables==0.1.18

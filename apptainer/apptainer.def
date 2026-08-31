@@ -1,0 +1,34 @@
+Bootstrap: docker
+From: {{ BASE_IMAGE }}
+ 
+%arguments
+    BASE_IMAGE=condaforge/miniforge3:latest
+    ENV_NAME=env
+    # SPEC_FILE has no default -- build_apptainer.sh always passes one
+    # explicitly via --build-arg. If it's ever missing, the build fails
+    # loudly instead of silently building an empty environment.
+ 
+%files
+    {{ SPEC_FILE }} /opt/environment.yml
+ 
+%post
+    mamba env create -f /opt/environment.yml -n {{ ENV_NAME }}
+    mamba clean -afy
+ 
+%environment
+    # Put the env's bin/ first on PATH so exec/run/shell all see it
+    # without needing an interactive `conda activate`.
+    export PATH=/opt/conda/envs/{{ ENV_NAME }}/bin:$PATH
+    export LC_ALL=C
+ 
+%runscript
+    exec python3 "$@"
+ 
+%labels
+    Description Built from a conda-style spec file (env: "{{ ENV_NAME }}")
+ 
+%test
+    # versions). `conda list -p <prefix>` reads the env directly instead.
+    /opt/conda/envs/{{ ENV_NAME }}/bin/python3 -V < /dev/null
+    echo "Packages installed in env '{{ ENV_NAME }}':"
+    /opt/conda/bin/conda list -p /opt/conda/envs/{{ ENV_NAME }} < /dev/null
