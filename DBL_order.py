@@ -121,10 +121,10 @@ def get_arguments(argv=None):
             default='e_coli'
             )
     parser.add_argument(
-                '--cell_free',
-                help="adds constraints to reverse translate with codon table for tobacco as well (for ALICE cell free mix)",
-                action='store_true'
-                )
+            '--cell_free',
+            help="adds constraints to reverse translate with codon table for tobacco as well (for ALICE cell free mix)",
+            action='store_true'
+            )
     parser.add_argument(
             '--design_prefix',
             help='designs get IDs with this prefix (e.g. LM0001, LM0002, etc...)',
@@ -264,16 +264,50 @@ def get_binding_adapters(args, cuts):
         assert binding_adapters == hard_coded_binding_adapters, f'Binding adapters are not correct for {args.enzyme}. Please check the hard-coded binding adapters in the script.'
     return binding_adapters
 
-def check_max_len(df, args, cuts):
+def check_aa_sequences(df, args, cuts):
     binding_adapters = get_binding_adapters(args, cuts)
     max_len_dna = args.max_length - len(binding_adapters[0]) - len(binding_adapters[1])
     max_length_aa = int(np.floor(max_len_dna/3)) # max len minus adapters, divided by 3 for aa
-    for seq in list(df['aa_sequence']):
+    for i, seq in enumerate(list(df['aa_sequence'])):
         if len(seq) > max_length_aa:
             print(f'  [!] Sequence {seq} is too long for the specified maximum length ({len(seq)} vs. {max_length_aa} aa). Base dna length is 5000 bp max. Did you make a mistake in the input file?')
-            sys.exit("  [!] Sequence too long for twist synthesis. System exiting...")
+            sys.exit("  ERROR: Sequence too long for twist synthesis. System exiting...")
+        current_letter = ""
+        count = 0
+        for aa in seq
+            if aa not in list(SeqUtils.IUPACData.protein_letters_1):
+                print(f'  [!] Sequence {seq} contains non-standard amino acid {aa}. Please check your input file.')
+                sys.exit("  ERROR: Non-standard amino acid found. System exiting...")
+            #check for repeats of the same amino acid
+            if aa == current_letter:
+                count += 1
+                if count >= 4:
+                    print(f'  [!] Sequence number {i+1} contains more than 4 repeats of the same amino acid {aa}. This will increase sequence comnplexity and possibly be bad for your protein.')
+            else:
+                current_letter = aa
+                count = 1
+            
     return
+def check_for_duplicates(aa_sequences):
+    all_aa_seq = len(aa_sequences)
+    unique_aa_seq = len(np.unique(list(aa_sequences.values())))
+    if all_aa_seq != unique_aa_seq:
+        print(f'[!] Found duplicated sequences ({unique_aa_seq} unique sequences vs. {all_aa_seq} total sequences):')
 
+        visited = set()
+        dup = [x for x in aa_sequences.values() if x in visited or (visited.add(x) or False)]
+        duplicates = {d:[] for d in dup}
+        for k, v in aa_sequences.items():
+            if v in dup:
+                duplicates[v].append(k)
+
+        for seq, ids in duplicates.items():
+            for id in ids:
+                print(f'>{id}')
+            print(seq + '\n-----')
+
+        print('ERROR: Duplicates. Verify your sequences and retry. System exiting...')
+        sys.exit()
 
 # ============================================
 # Domesticator
@@ -354,6 +388,7 @@ def reverse_translate(
         species='e_coli',
         avoid=['GGTCTC', 'GAGACC'],
         count=None,
+        warnings={},
         cell_free=False
     ):
     '''
@@ -436,7 +471,10 @@ def reverse_translate(
                 if count == None:
                     print('  [!] Preventing alternative start sites removed from the list of optimisation constraints.')
                 else:
-                    print(f'  [!] Preventing alternative start sites removed from the list of optimisation constraints for {count}th sequence.')
+                    if 'start_sites' not in warnings:
+                        warnings['start_sites'] = []
+                    warnings['start_sites'].append(count)
+                    #print(f'  [!] Preventing alternative start sites removed from the list of optimisation constraints for {count}th sequence.')
                 initial_problem = DnaOptimizationProblem(naive_dna_sequence, constraints=constraints_easier, objectives=objectives, logger=None)
 
             else:
@@ -464,31 +502,11 @@ def reverse_translate(
 
     best_solution = solutions[best_idx]
 
-    return best_solution.sequence
+    return best_solution.sequence, warnings
 
 # ============================================
 # FUNCTIONS
 # ============================================
-def check_for_duplicates(aa_sequences):
-    all_aa_seq = len(aa_sequences)
-    unique_aa_seq = len(np.unique(list(aa_sequences.values())))
-    if all_aa_seq != unique_aa_seq:
-        print(f'[!] Found duplicated sequences ({unique_aa_seq} unique sequences vs. {all_aa_seq} total sequences):')
-
-        visited = set()
-        dup = [x for x in aa_sequences.values() if x in visited or (visited.add(x) or False)]
-        duplicates = {d:[] for d in dup}
-        for k, v in aa_sequences.items():
-            if v in dup:
-                duplicates[v].append(k)
-
-        for seq, ids in duplicates.items():
-            for id in ids:
-                print(f'>{id}')
-            print(seq + '\n-----')
-
-        print('ERROR: Duplicates. Verify your sequences and retry. System exiting...')
-        sys.exit()
 
 def adjust_for_fragments(dna_sequence, max_length, gg_int_adapters, avoid_seqs):
     '''
@@ -536,9 +554,10 @@ def rev_translate_and_make_fragments(df, args, cuts):
         gg_adapters = get_binding_adapters(args, cuts)
         avoid_seqs = [cuts[args.enzyme][0], cuts[args.enzyme][1]] + args.avoid
         print("Starting reverse translation and fragment generation...")
+        warnings = {}
         for i, r in df.iterrows():
             amino_acid_sequence = r['aa_sequence']
-            dna_sequence = reverse_translate(
+            dna_sequence,warnings = reverse_translate(
                 amino_acid_sequence,
                 kmers_weight=1.0,
                 cai_weight=1.0,
@@ -547,12 +566,14 @@ def rev_translate_and_make_fragments(df, args, cuts):
                 species=args.species,
                 avoid=avoid_seqs,
                 count=i,
+                warnings=warnings,
                 cell_free=args.cell_free
                 )
             dna_sequences.append(dna_sequence)
             dna_fragment = adjust_for_fragments(dna_sequence, args.max_length, gg_adapters, avoid_seqs)
             dna_fragments.append(dna_fragment)
             dna_frag_len.append(len(dna_fragment))
+        print(f'  [!] You may have alternative start sites for {len(warnings["start_sites"])} sequences.')
         df['dna_sequence'] = dna_sequences
         df['dna_fragments'] = dna_fragments
         df['length_fragments'] = dna_frag_len
@@ -744,7 +765,7 @@ if __name__ == '__main__':
     input_df, filename = read_input_sequences(args)
     filename = f'{date}_{user}_{filename}_{args.species}_{args.enzyme}'
     #check maximum length of sequences
-    check_max_len(input_df, args, cuts)
+    check_aa_sequences(input_df, args, cuts)
     # Reverse translate sequences and add adapters
     rev_translated_df = rev_translate_and_make_fragments(input_df, args, cuts)
     gg_df = golden_gate_assembly(rev_translated_df, args, cuts)
