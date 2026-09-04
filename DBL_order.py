@@ -77,10 +77,9 @@ def get_arguments(argv=None):
                             'pdb   - path to a folder of pdbs. Will pull all pdbs from that folder\n'
                            ,type=str)
     parser.add_argument(
-            '-g','--gg_vector',
+            'gg_vector',
             help='Fasta file of plasmid for Golden Gate cloning (determines the DNA adapters). Also determines the AA tags appended to the design in the FASTA output.',
             action='store',
-            required=True,
             type=str,
             )
 
@@ -274,7 +273,7 @@ def check_aa_sequences(df, args, cuts):
             sys.exit("  ERROR: Sequence too long for twist synthesis. System exiting...")
         current_letter = ""
         count = 0
-        for aa in seq
+        for aa in seq:
             if aa not in list(SeqUtils.IUPACData.protein_letters_1):
                 print(f'  [!] Sequence {seq} contains non-standard amino acid {aa}. Please check your input file.')
                 sys.exit("  ERROR: Non-standard amino acid found. System exiting...")
