@@ -53,6 +53,8 @@ from dnachisel import Specification, SpecEvaluation
 def reverse_complement(seq):
     complement = {'A':'T','T':'A','C':'G','G':'C'}
     return ''.join(complement[x] for x in reversed(seq.upper()))
+def is_aa(aa):
+    return aa.upper() in 'ACDEFGHIKLMNPQRSTVWY'
 # ============================================
 # ARGUMENTS
 # ============================================
@@ -82,8 +84,26 @@ def get_arguments(argv=None):
             action='store',
             type=str,
             )
+    parser.add_argument(
+            '-p','--project',
+            help='Name of the project this order is associated with. All spaces should be underscores, not case sensitive, will find if you only use substring.\n' \
+                    'e.g. --project "Cancer_diffusion" or --project "cancer" will both work.\n'\
+                    'List: [Cancer_diffusion","Enzyme_diffusion_Novonesis","Snakebite_diffusion","Fraunhofer_diffusion","pMHC_Binders","Migraine_binders",\
+                    "Granzyme_binders","IFNAR_binders",\
+                    "DIRM_TCR_modelling",\
+                    "Close-loop",\
+                    "ADAC",\
+                    "Nanobody_design",\
+                    "CD3epsilon_design",\
+                    "ProteusAI",\
+                    "Lipase_design",\
+                    "FGFR2b_binder_design","CL_Application","Protein_de-immunizer",\
+                    "Dsup_redesign","Target_characterization_module"]',
+            action='store',
+            type=str,
+            )
 
-    # OPTIONAL
+    # Restriction enzyme options
     parser.add_argument(
             '--n_overhang',
             help='cutsite overhang on the n terminus',
@@ -105,6 +125,8 @@ def get_arguments(argv=None):
             type=str,
             default='BsaI'
             )
+
+    #Reverse translation options
     parser.add_argument(
             '--avoid',
             help='sequences to avoid in the design',
@@ -123,18 +145,6 @@ def get_arguments(argv=None):
             '--cell_free',
             help="adds constraints to reverse translate with codon table for tobacco as well (for ALICE cell free mix)",
             action='store_true'
-            )
-    parser.add_argument(
-            '--design_prefix',
-            help='designs get IDs with this prefix (e.g. LM0001, LM0002, etc...)',
-            action='store',
-            type=str
-            )
-    parser.add_argument(
-            '--design_id',
-            help='increment design indices from this number.',
-            action='store',
-            type=int
             )
     parser.add_argument(
             '--starting_kmers_weight',
@@ -165,15 +175,29 @@ def get_arguments(argv=None):
             default=5000
             )
     parser.add_argument(
-            '--no_layout',
-            default=True,
-            help="do not apply automated layout formatting.",
-            action='store_true'
+            '--do_not_fix_repeats',
+            help=" Turn off checking for and fixing direct repeats in reverse translated dna.",
+            action='store_true',
             )
     parser.add_argument(
-            '--no_plasmids',
-            help="do not generate the cloned plasmid maps.",
-            action='store_true'
+            '--repeat_frag_size',
+            help="length of the direct repeat to be avoided",
+            action='store',
+            type=int,
+            default=12
+            )
+    # Name Options
+    parser.add_argument(
+            '--design_prefix',
+            help='designs get IDs with this prefix (e.g. LM0001, LM0002, etc...)',
+            action='store',
+            type=str
+            )
+    parser.add_argument(
+            '--design_id',
+            help='increment design indices from this number.',
+            action='store',
+            type=int
             )
     parser.add_argument(
             '--verbose',
@@ -274,7 +298,7 @@ def check_aa_sequences(df, args, cuts):
         current_letter = ""
         count = 0
         for aa in seq:
-            if aa not in list(SeqUtils.IUPACData.protein_letters_1):
+            if not is_aa(aa.upper()):
                 print(f'  [!] Sequence {seq} contains non-standard amino acid {aa}. Please check your input file.')
                 sys.exit("  ERROR: Non-standard amino acid found. System exiting...")
             #check for repeats of the same amino acid
@@ -287,6 +311,7 @@ def check_aa_sequences(df, args, cuts):
                 count = 1
             
     return
+
 def check_for_duplicates(aa_sequences):
     all_aa_seq = len(aa_sequences)
     unique_aa_seq = len(np.unique(list(aa_sequences.values())))
@@ -308,6 +333,41 @@ def check_for_duplicates(aa_sequences):
         print('ERROR: Duplicates. Verify your sequences and retry. System exiting...')
         sys.exit()
 
+def get_project(args):
+    # hard coded from the projects spreadsheet in the OneNote.
+    projects = ["Cancer_diffusion","Enzyme_diffusion_Novonesis","Snakebite_diffusion","Fraunhofer_diffusion","pMHC_Binders","Migraine_binders",
+            "Granzyme_binders","IFNAR_binders",
+            "DIRM_TCR_modelling",
+            "Close-loop",
+            "ADAC",
+            "Nanobody_design",
+            "CD3epsilon_design",
+            "ProteusAI",
+            "Lipase_design",
+            "FGFR2b_binder_design",
+            "CL_Application",
+            "Protein_de-immunizer",
+            "Dsup_redesign",
+            "Target_characterization_module",
+            "Other"
+            ]
+    project = []
+    if args.project:
+        input_project = args.project
+    else:
+        print(f"No project was provided. Please include a project from the list with -p argument\n{projects}")
+    for p in projects:
+        if input_project.lower() in p.lower():
+            project.append(p)
+    if len(project) == 1:
+        return project[0]
+    if len(project) == 0:
+        print(f"ERROR: Project not found\n Options are {projects}")
+        sys.exit("No Matching Project")
+    if len(project) > 1:
+        print(f"ERROR: Project matches multiple options, pleas specify.\n Matching options are {project}")
+        sys.exit("Too many matching projects")
+    
 # ============================================
 # Domesticator
 # ============================================
@@ -503,56 +563,14 @@ def reverse_translate(
 
     return best_solution.sequence, warnings
 
-# ============================================
-# FUNCTIONS
-# ============================================
-
-def adjust_for_fragments(dna_sequence, max_length, gg_int_adapters, avoid_seqs):
-    '''
-    Check size of DNA sequences pad if necessary to meet minimum length requirements for ordering gene fragments from Twist Bioscience.
-    '''
-    dna_seq = gg_int_adapters[0] + dna_sequence + gg_int_adapters[1]
-    # Check if the sequence fits the the size limits
-    if len(dna_seq) < 300:
-        pad_length = ((300 - (len(dna_seq))) // 2 )
-        extra = 300 - len(dna_seq) - (2 * pad_length)
-        if extra < 0 :
-            extra = 0
-        # Pad sequence
-        pad_nocut = False
-        while pad_nocut == False:
-            pad5prime = ''.join(np.random.choice(['A','T','C','G'], size=pad_length + extra))
-            pad3prime = ''.join(np.random.choice(['A','T','C','G'], size=pad_length))
-            dna_fragment =  pad5prime + dna_seq + pad3prime
-            pad_nocut = True
-
-            for a_seq in avoid_seqs:
-                # if any cut sequence is found in the padding, try again
-                if (a_seq in pad5prime) or (a_seq in pad3prime):
-                    pad_nocut = False
-                elif a_seq in pad5prime + pad3prime:
-                    pad_nocut = False
-                elif dna_fragment.count(a_seq) > 1:
-                    pad_nocut = False
-    else:
-        dna_fragment = dna_seq
-    if len(dna_fragment) > max_length:
-        sys.exit(f"Internal error: DNA sequence is too long to be ordered as a gene fragment ({len(dna_seq)} vs. {max_length} bp).\n"\
-                    "This should have been caught earlier in the script. Contact @sruge that you are seeing this error")
-    return dna_fragment
-
-def rev_translate_and_make_fragments(df, args, cuts):
+def rev_translate_many(df, args, cuts):
         '''
         Reverse translate amino acid sequences to DNA sequences and adjust for gene fragment length requirements.
         dna_sequences: list of reverse translated DNA sequences
         dna_fragments: list of DNA sequences with adapters added and adjusted for gene fragment length requirements
         '''
         dna_sequences = []
-        dna_fragments = []
-        dna_frag_len = []
-        gg_adapters = get_binding_adapters(args, cuts)
         avoid_seqs = [cuts[args.enzyme][0], cuts[args.enzyme][1]] + args.avoid
-        print("Starting reverse translation and fragment generation...")
         warnings = {}
         for i, r in df.iterrows():
             amino_acid_sequence = r['aa_sequence']
@@ -569,14 +587,141 @@ def rev_translate_and_make_fragments(df, args, cuts):
                 cell_free=args.cell_free
                 )
             dna_sequences.append(dna_sequence)
-            dna_fragment = adjust_for_fragments(dna_sequence, args.max_length, gg_adapters, avoid_seqs)
-            dna_fragments.append(dna_fragment)
-            dna_frag_len.append(len(dna_fragment))
-        print(f'  [!] You may have alternative start sites for {len(warnings["start_sites"])} sequences.')
+        if 'start_sites' in warnings:
+            print(f'  [!] You may have alternative start sites for {len(warnings["start_sites"])} sequences.')
         df['dna_sequence'] = dna_sequences
-        df['dna_fragments'] = dna_fragments
-        df['length_fragments'] = dna_frag_len
         return df
+# ============================================
+# FUNCTIONS
+# ============================================
+def find_dna_repeats(dna_sequence,frag_size):
+    '''
+    Check for repeats of the same DNA sequence within a sequence and modify if necessary.
+    '''
+    frag_dict = {}
+    dup_count = 0
+    # detect repeats within sequence
+    for i in range(0, len(dna_sequence) - frag_size):
+        fragment = dna_sequence[i:i+frag_size]
+        rv_comp_frag = reverse_complement(fragment)
+        if fragment in frag_dict:
+            frag_dict[fragment].append(i)
+            dup_count += 1
+        elif rv_comp_frag in frag_dict:
+            frag_dict[rv_comp_frag].append(i)
+            dup_count += 1
+        else:
+            frag_dict[fragment] = [i]
+    return frag_dict, dup_count
+
+def get_new_fragment(dna_frag, species, avoid, max_tries = 3):
+    count = 0
+    solution_found = False
+    while solution_found == False and count <= max_tries:
+        constraints = []
+        objectives = []
+        location = Location.from_biopython_location(SeqFeature.FeatureLocation(0, len(dna_frag)))
+        for seq in avoid: # GG enzyme recognition site.
+            constraints.append(dnachisel.builtin_specifications.AvoidPattern(seq, location=location))
+        constraints.append(dnachisel.builtin_specifications.EnforceTranslation(location=location, genetic_table="Standard"))
+        if count == 0:
+            objectives.append(dnachisel.builtin_specifications.MaximizeCAI( species=species, boost=1.0, location=location))
+            constraints.append(dnachisel.builtin_specifications.EnforceGCContent(mini=0.4, maxi=0.65, window=12, location=location))
+        else:
+            constraints.append(dnachisel.builtin_specifications.EnforceGCContent(mini=0.2, maxi=0.8, window=12, location=location))
+        try:
+            problem = DnaOptimizationProblem(dna_frag, constraints = constraints, objectives=objectives,logger=None)
+            problem.resolve_constraints()
+            overlap = problem.sequence
+            solution_found = True
+        except:
+            solution_found = False
+            overlap = dna_frag
+        count += 1
+    return overlap, solution_found
+
+def fix_dna_repeats(df, args, max_tries=3):
+    frag_size = args.repeat_frag_size
+    species = args.species
+    avoid = args.avoid
+    dna_sequences_fixed = []
+    def get_fragment_from_index(dup_index, dna_sequence):
+        start = dup_index - (dup_index % 3) # start of codon before fragment
+        end = dup_index + frag_size + (3 - (dup_index + frag_size) % 3) # end of codon after fragment
+        temp_frag = dna_sequence[start:end]
+        new_frag, solution = get_new_fragment(temp_frag, species, avoid, max_tries=3)    
+        dna_sequence = dna_sequence[:start] + new_frag + dna_sequence[end:]
+        return dna_sequence, solution
+    
+    for i, r in df.iterrows():
+        dna_sequence = r['dna_sequence']
+        aa_sequence = r['aa_sequence']
+        for j in range(max_tries):
+            frag_dict, dup_count = find_dna_repeats(dna_sequence,frag_size)
+            if dup_count > 0:
+                print(f"{dup_count} duplicates found in dna sequence for protein {i}, attempt to fix number {j}")
+            for frag in frag_dict:
+                avoid.append(frag)
+                avoid.append(reverse_complement(frag))
+            for frag, loc in frag_dict.items():
+                if len(loc) > 1:
+                    #need to be careful here to not change aa sequence, so we need it to be a synonymous change (multiples of 3 from the start of the dna sequence)
+                    duplicates = loc[1:] # skip the first occurrence
+                    solution_found = True
+                    for dup_index in duplicates:
+                        dna_sequence, solution = get_fragment_from_index(dup_index, dna_sequence)
+                        if solution == False:
+                            solution_found = False
+                    if solution_found == False: # if any of the others couldn't be fixed, try to fix the first occurrence
+                        dna_sequence, solution = get_fragment_from_index(loc[0], dna_sequence)
+            assert Seq.translate(dna_sequence) == aa_sequence, f"Internal error: DNA sequence does not match amino acid sequence after fixing repeats. Please contact @sruge with the following information:\nAA sequence: {aa_sequence}\nDNA sequence: {dna_sequence}"
+        dna_sequences_fixed.append(dna_sequence)
+    df['dna_sequence'] = dna_sequences_fixed
+    return df
+
+def adjust_for_fragments(df, args, cuts):
+    '''
+    Check size of DNA sequences pad if necessary to meet minimum length requirements for ordering gene fragments from Twist Bioscience.
+    '''
+    max_length = args.max_length
+    avoid_seqs = args.avoid
+    gg_int_adapters = get_binding_adapters(args, cuts)
+    dna_fragments = []
+    dna_frag_len = []
+    for i,r in df.iterrows():
+        dna_seq = gg_int_adapters[0] + r.dna_sequence + gg_int_adapters[1]
+        # Check if the sequence fits the the size limits
+        if len(dna_seq) < 300:
+            pad_length = ((300 - (len(dna_seq))) // 2 )
+            extra = 300 - len(dna_seq) - (2 * pad_length)
+            if extra < 0 :
+                extra = 0
+            # Pad sequence
+            pad_nocut = False
+            while pad_nocut == False:
+                pad5prime = ''.join(np.random.choice(['A','T','C','G'], size=pad_length + extra))
+                pad3prime = ''.join(np.random.choice(['A','T','C','G'], size=pad_length))
+                dna_fragment =  pad5prime + dna_seq + pad3prime
+                pad_nocut = True
+
+                for a_seq in avoid_seqs:
+                    # if any cut sequence is found in the padding, try again
+                    if (a_seq in pad5prime) or (a_seq in pad3prime):
+                        pad_nocut = False
+                    elif a_seq in pad5prime + pad3prime:
+                        pad_nocut = False
+                    elif dna_fragment.count(a_seq) > 1:
+                        pad_nocut = False
+        else:
+            dna_fragment = dna_seq
+        if len(dna_fragment) > max_length:
+            sys.exit(f"Internal error: DNA sequence is too long to be ordered as a gene fragment ({len(dna_seq)} vs. {max_length} bp).\n"\
+                        "This should have been caught earlier in the script. Contact @sruge that you are seeing this error")
+        dna_fragments.append(dna_fragment)
+        dna_frag_len.append(len(dna_fragment))
+    df['dna_fragments'] = dna_fragments
+    df['length_fragments'] = dna_frag_len
+    return df
 
 def golden_gate_assembly(df, args, cuts):
     '''
@@ -766,7 +911,15 @@ if __name__ == '__main__':
     #check maximum length of sequences
     check_aa_sequences(input_df, args, cuts)
     # Reverse translate sequences and add adapters
-    rev_translated_df = rev_translate_and_make_fragments(input_df, args, cuts)
-    gg_df = golden_gate_assembly(rev_translated_df, args, cuts)
+    print("Starting reverse translation and fragment generation...")
+    rev_translated_df = rev_translate_many(input_df, args, cuts)
+    if not args.do_not_fix_repeats: #it's a double negative, but I think I want it on by default
+        print("Fixing direct DNA repeats. If this is taking too long you can remove this with --do_not_fix_repeats.\n"
+              "Alternatively you can kill the script and try to see why your proteins are making so many 12+ bp repeats\n" 
+              "Long times are likely due to either repeat amino acid sequences or having stretches of high or low gc content amino acids")
+        rev_translate_df = fix_dna_repeats(rev_translated_df, args, max_tries=5)
+    print("Adding adapters")
+    adapters_df = adjust_for_fragments(rev_translated_df, args, cuts)
+    gg_df = golden_gate_assembly(adapters_df, args, cuts)
     check_for_a280_and_coomassie(gg_df)
     output(gg_df, filename)
