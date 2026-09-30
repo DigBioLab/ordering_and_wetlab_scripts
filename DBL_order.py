@@ -606,10 +606,10 @@ def find_dna_repeats(dna_sequence,frag_size):
         rv_comp_frag = reverse_complement(fragment)
         if fragment in frag_dict:
             frag_dict[fragment].append(i)
-            dup_count += 1
+            if i>30: dup_count += 1
         elif rv_comp_frag in frag_dict:
             frag_dict[rv_comp_frag].append(i)
-            dup_count += 1
+            if i>30: dup_count += 1
         else:
             frag_dict[fragment] = [i]
     return frag_dict, dup_count
@@ -625,9 +625,10 @@ def get_new_fragment(dna_frag, species, avoid, max_tries = 3):
             constraints.append(dnachisel.builtin_specifications.AvoidPattern(seq, location=location))
         constraints.append(dnachisel.builtin_specifications.EnforceTranslation(location=location, genetic_table="Standard"))
         if count == 0:
+            constraints.append(dnachisel.builtin_specifications.EnforceGCContent(mini=0.3, maxi=0.7, window=12, location=location))
+        if count < 2:
             objectives.append(dnachisel.builtin_specifications.MaximizeCAI( species=species, boost=1.0, location=location))
-            constraints.append(dnachisel.builtin_specifications.EnforceGCContent(mini=0.4, maxi=0.65, window=12, location=location))
-        else:
+        if count > 0:
             constraints.append(dnachisel.builtin_specifications.EnforceGCContent(mini=0.2, maxi=0.8, window=12, location=location))
         try:
             problem = DnaOptimizationProblem(dna_frag, constraints = constraints, objectives=objectives,logger=None)
@@ -669,10 +670,11 @@ def fix_dna_repeats(df, args, max_tries=3):
                     duplicates = loc[1:] # skip the first occurrence
                     solution_found = True
                     for dup_index in duplicates:
-                        dna_sequence, solution = get_fragment_from_index(dup_index, dna_sequence)
+                        if dup_index > 30: #just preserve the front end
+                            dna_sequence, solution = get_fragment_from_index(dup_index, dna_sequence)
                         if solution == False:
                             solution_found = False
-                    if solution_found == False: # if any of the others couldn't be fixed, try to fix the first occurrence
+                    if solution_found == False and loc[0] > 30: # if any of the others couldn't be fixed, try to fix the first occurrence
                         dna_sequence, solution = get_fragment_from_index(loc[0], dna_sequence)
             assert Seq.translate(dna_sequence) == aa_sequence, f"Internal error: DNA sequence does not match amino acid sequence after fixing repeats. Please contact @sruge with the following information:\nAA sequence: {aa_sequence}\nDNA sequence: {dna_sequence}"
         dna_sequences_fixed.append(dna_sequence)
