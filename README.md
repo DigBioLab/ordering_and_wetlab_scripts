@@ -24,25 +24,25 @@ Currently has:
 * If you are using cell free mix make sure to add --cell_free flag!
 
 If you have not already, either
-    a. Install a conda python 3.11 environment
-        i. conda install biopython
-        ii. conda install numpy
-        iii. conda install pandas
-        iv. pip install dnachisel
-    b. Or download stacey's apptainer from sharepoint named bioenv_sruge.sif
+* Install a conda python 3.11 environment
+    * conda install biopython
+    * conda install numpy
+    * conda install pandas
+    * pip install dnachisel
+* Or download stacey's apptainer from sharepoint named bioenv_sruge.sif
 In your terminal run script, examples are below:
-    a. Assuming you are running from the folder with the .sif file and the python file
-        i. $your.fa - is the relative path to and name of the fasta with all your sequences
-        ii. $plasmid.fa - is the relative path to and name of the plasmid you want to clone into
-    b. With apptainer
-        i. ./bioenv_sruge.sif DBL_order.py $your.fa $plasmid.fa
-    c. With your own conda environment
-        i. python DBL_order.py $your.fa $plasmid.fa
-    d. If you are doing cell free include flag that will co-optimise for tobacco
-        i. --cell_free
-        ii. i.e. python DBL_order.py $your.fa $plasmid.fa --cell_free
-    e. To read all the optional variables you can always use the help option
-        i. python DBL_order.py -h
+* Assuming you are running from the folder with the .sif file and the python file
+    * $your.fa - is the relative path to and name of the fasta with all your sequences
+    * $plasmid.fa - is the relative path to and name of the plasmid you want to clone into
+    * With apptainer
+        * ./bioenv_sruge.sif DBL_order.py $your.fa $plasmid.fa
+    * With your own conda environment
+        * python DBL_order.py $your.fa $plasmid.fa
+    * If you are doing cell free include flag that will co-optimise for tobacco
+        * --cell_free
+        * i.e. python DBL_order.py $your.fa $plasmid.fa --cell_free
+    * To read all the optional variables you can always use the help option
+        * python DBL_order.py -h
 
 #### Sanger Sequencing:
 
