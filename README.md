@@ -19,7 +19,7 @@ Currently has:
 * Wondering why the script is called John Bercow? https://www.youtube.com/watch?v=VYycQTm2HrM&ab_channel=TheSun
 
 * AVAILABLE ENTRY VECTORS:
-*** see Benchling>DBL Database>Cloning plasmids ***
+*** see [Benchling>DBL Database>Cloning plasmids](https://benchling.com/khabj/f_/BxYl1BKHiS-cloning-plasmids-p-numbers/) ***
 * EXAMPLE COMMAND: python DBL_order.py input.fasta -g gg_vector.fasta
 * If you are using cell free mix make sure to add --cell_free flag!
 
