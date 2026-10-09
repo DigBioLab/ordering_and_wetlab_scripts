@@ -920,8 +920,20 @@ if __name__ == '__main__':
               "Alternatively you can kill the script and try to see why your proteins are making so many 12+ bp repeats\n" 
               "Long times are likely due to either repeat amino acid sequences or having stretches of high or low gc content amino acids")
         rev_translate_df = fix_dna_repeats(rev_translated_df, args, max_tries=5)
-    print("Adding adapters")
-    adapters_df = adjust_for_fragments(rev_translated_df, args, cuts)
-    gg_df = golden_gate_assembly(adapters_df, args, cuts)
+    if args.no_adapters:
+        def add_extra_df_lines(df):
+            df['dna_fragments'] = df['dna_sequence']
+            df['length_fragments'] = df['dna_sequence'].apply(len)
+            df['plasmid'] = 'No plasmid'
+            df['cloned_plasmid_seq'] = 'No plasmid'
+            df['ORF'] = df['dna_sequence']
+            df['exp_aa_seq'] = df['aa_sequence']
+            return df
+        print("No adapters added, skipping Golden Gate assembly")
+        gg_df = add_extra_df_lines(rev_translated_df)
+    else:
+        print("Adding adapters")
+        adapters_df = adjust_for_fragments(rev_translated_df, args, cuts)
+        gg_df = golden_gate_assembly(adapters_df, args, cuts)
     check_for_a280_and_coomassie(gg_df)
     output(gg_df, filename)
