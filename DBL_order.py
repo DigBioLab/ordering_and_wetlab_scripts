@@ -644,7 +644,7 @@ def get_new_fragment(dna_frag, species, avoid, max_tries = 3):
 def fix_dna_repeats(df, args, max_tries=3):
     frag_size = args.repeat_frag_size
     species = args.species
-    avoid = args.avoid
+    base_avoid = args.avoid
     dna_sequences_fixed = []
     def get_fragment_from_index(dup_index, dna_sequence):
         start = dup_index - (dup_index % 3) # start of codon before fragment
@@ -657,6 +657,7 @@ def fix_dna_repeats(df, args, max_tries=3):
     for i, r in df.iterrows():
         dna_sequence = r['dna_sequence']
         aa_sequence = r['aa_sequence']
+        avoid = base_avoid.copy()
         for j in range(max_tries):
             frag_dict, dup_count = find_dna_repeats(dna_sequence,frag_size)
             if dup_count > 0:
