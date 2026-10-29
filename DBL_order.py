@@ -273,6 +273,8 @@ def read_input_sequences(args):
                     seq_dict['readin_order'].append(i)
                     seq_dict['well_position'].append(w96[i])
     df = pd.DataFrame(seq_dict)
+    project = get_project(args)
+    df['project'] = project
     return df, filename
 
 def get_binding_adapters(args, cuts):
@@ -280,11 +282,11 @@ def get_binding_adapters(args, cuts):
     outside_flank = ['GTTTAAA','AAAGGA']
     fw_cut, rv_cut, spacer_len, _ = cuts[args.enzyme]
     spacer = 'GTACTACGTAATGT'
-    binding_adapters = [fw_cut + spacer[:spacer_len] + args.n_overhang + "T", "G" + args.c_overhang + spacer[-1*spacer_len:] + rv_cut]
-    if args.no_adapters == False:
-        binding_adapters = [outside_flank[0] + binding_adapters[0],binding_adapters[1] +  outside_flank[1]]
-    if args.enzyme == 'BsaI' and args.no_adapters == False:
-        assert binding_adapters == hard_coded_binding_adapters, f'Binding adapters are not correct for {args.enzyme}. Please check the hard-coded binding adapters in the script.'
+    binding_adapters = [outside_flank[0] + fw_cut + spacer[:spacer_len] + args.n_overhang + "T", "G" + args.c_overhang + spacer[-1*spacer_len:] + rv_cut +  outside_flank[1]]
+    if args.no_adapters == True:
+        binding_adapters = ["",""]
+    # if args.enzyme == 'BsaI' and args.no_adapters == False:
+    #     assert binding_adapters == hard_coded_binding_adapters, f'Binding adapters are not correct for {args.enzyme}. Please check the hard-coded binding adapters in the script.'
     return binding_adapters
 
 def check_aa_sequences(df, args, cuts):
@@ -356,6 +358,7 @@ def get_project(args):
         input_project = args.project
     else:
         print(f"No project was provided. Please include a project from the list with -p argument\n{projects}")
+        sys.exit()
     for p in projects:
         if input_project.lower() in p.lower():
             project.append(p)
@@ -853,7 +856,18 @@ def check_for_a280_and_coomassie(df):
     df['MW'] = mass
     df["ext_coefficient"] = ext_coefficient
     return
-
+def prep_df_for_output(input_df):
+    df = input_df.copy()
+    df['cloned_plasmid_seq'] = ""
+    df['ORF'] = ""
+    df['exp_aa_seq'] = df['aa_sequence']
+    df['dna_fragments'] = df['dna_sequence']
+    frag_len = []
+    for _, r in df.iterrows():
+        frag_len.append(len(r['dna_fragments']))
+    df['length_fragments'] = frag_len
+    return df
+    
 def output(df, filename):
     '''
     outputs a CSV with all information for user. columns are:
@@ -921,8 +935,12 @@ if __name__ == '__main__':
               "Alternatively you can kill the script and try to see why your proteins are making so many 12+ bp repeats\n" 
               "Long times are likely due to either repeat amino acid sequences or having stretches of high or low gc content amino acids")
         rev_translate_df = fix_dna_repeats(rev_translated_df, args, max_tries=5)
-    print("Adding adapters")
-    adapters_df = adjust_for_fragments(rev_translated_df, args, cuts)
-    gg_df = golden_gate_assembly(adapters_df, args, cuts)
+    if args.no_adapters == True:
+        print("Adapters will not be added to the sequences. This is not recommended unless you are using a different cloning method than Golden Gate.")
+        gg_df = prep_df_for_output(rev_translated_df)
+    else:
+        print("Adding adapters")
+        adapters_df = adjust_for_fragments(rev_translated_df, args, cuts)
+        gg_df = golden_gate_assembly(adapters_df, args, cuts)
     check_for_a280_and_coomassie(gg_df)
     output(gg_df, filename)
